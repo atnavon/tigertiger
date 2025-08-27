@@ -7,6 +7,18 @@ static BITMAPINFO* bmi;
 static game_t game;
 static uint32 input;
 
+#define WINDOW_STYLE (WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX) | WS_VISIBLE
+
+static void client_to_window(uint32* w, uint32* h)
+{
+	RECT rect = { 0, 0, *w, *h };
+
+	AdjustWindowRectEx(&rect, WINDOW_STYLE, FALSE, 0);
+
+	*w = rect.right - rect.left;
+	*h = rect.bottom - rect.top;
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	switch (msg)
@@ -15,12 +27,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		{
 			PAINTSTRUCT ps;
 			HDC hdc = BeginPaint(hwnd, &ps);
-			RECT rc;
+			RECT client;
 
-			GetClientRect(hwnd, &rc);
+			GetClientRect(hwnd, &client);
 
-			uint32 w = rc.right - rc.left;
-			uint32 h = rc.bottom - rc.top;
+			uint32 w = client.right - client.left;
+			uint32 h = client.bottom - client.top;
 
 			StretchDIBits(hdc, 0, 0, w, h, 0, 0, GPU_SCR_W, GPU_SCR_H, game_get_framebuffer(&game), bmi, DIB_RGB_COLORS, SRCCOPY);
 			EndPaint(hwnd, &ps);
@@ -81,6 +93,88 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 			break;
 		}
+		case WM_SIZING:
+		{
+			RECT* rect = lParam;
+			RECT client;
+			RECT window;
+
+			GetClientRect(hwnd, &client);
+			GetWindowRect(hwnd, &window);
+
+			uint32 w = rect->right - rect->left - window.right + window.left + client.right;
+			uint32 h = rect->bottom - rect->top - window.bottom + window.top + client.bottom;
+
+			switch (wParam)
+			{
+				case WMSZ_LEFT:
+				case WMSZ_RIGHT:
+				case WMSZ_BOTTOMRIGHT:
+				case WMSZ_TOPRIGHT:
+					h = (w * GPU_SCR_H) / GPU_SCR_W;
+					break;
+				case WMSZ_TOP:
+				case WMSZ_BOTTOM:
+				case WMSZ_TOPLEFT:
+				case WMSZ_BOTTOMLEFT:
+					w = (h * GPU_SCR_W) / GPU_SCR_H;
+					break;
+			}
+
+			client_to_window(&w, &h);
+
+			if (wParam == WMSZ_LEFT || wParam == WMSZ_TOPLEFT || wParam == WMSZ_BOTTOMLEFT)
+			{
+				rect->left = rect->right - w;
+			}
+			else
+			{
+				rect->right = rect->left + w;
+			}
+
+			if (wParam == WMSZ_TOP || wParam == WMSZ_TOPLEFT || wParam == WMSZ_TOPRIGHT)
+			{
+				rect->top = rect->bottom - h;
+			}
+			else
+			{
+				rect->bottom = rect->top + h;
+			}
+
+			InvalidateRect(hwnd, NULL, FALSE);
+
+			return 1;
+		}
+		case WM_GETMINMAXINFO:
+		{
+			MINMAXINFO* mmi = lParam;
+			uint32 w = GPU_SCR_W;
+			uint32 h = GPU_SCR_H;
+
+			client_to_window(&w, &h);
+
+			mmi->ptMinTrackSize.x = w;
+			mmi->ptMinTrackSize.y = h;
+
+			return 0;
+		}
+		case WM_NCLBUTTONDBLCLK:
+		{
+			switch (wParam)
+			{
+				case HTLEFT:
+				case HTRIGHT:
+				case HTTOP:
+				case HTBOTTOM:
+				case HTTOPLEFT:
+				case HTTOPRIGHT:
+				case HTBOTTOMLEFT:
+				case HTBOTTOMRIGHT:
+					return 0;
+			}
+
+			break;
+		}
 		case WM_DESTROY:
 		{
 			PostQuitMessage(0);
@@ -116,15 +210,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	wc.lpfnWndProc = WndProc;
 	wc.hInstance = hInstance;
 	wc.lpszClassName = "TigerTiger";
+	wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
 
 	RegisterClassA(&wc);
 
-	RECT rect = { 0, 0, GPU_SCR_W * 2, GPU_SCR_H * 2 };
+	uint32 window_w = GPU_SCR_W * 2;
+	uint32 window_h = GPU_SCR_H * 2;
 
-	AdjustWindowRectEx(&rect, WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX), FALSE, 0);
-
-	uint32 window_w = rect.right - rect.left;
-	uint32 window_h = rect.bottom - rect.top;
+	client_to_window(&window_w, &window_h);
 
 	RECT screen;
 
@@ -135,7 +228,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	uint32 window_x = screen.left + (screen_w - window_w) / 2;
 	uint32 window_y = screen.top + (screen_h - window_h) / 2;
 
-	HWND hwnd = CreateWindowExA(0, "TigerTiger", "Tiger! Tiger!", WS_OVERLAPPEDWINDOW | WS_VISIBLE, window_x, window_y, window_w, window_h, 0, 0, hInstance, 0);
+	HWND hwnd = CreateWindowExA(0, "TigerTiger", "Tiger! Tiger!", WINDOW_STYLE, window_x, window_y, window_w, window_h, 0, 0, hInstance, 0);
 
 	bmi = calloc(1, sizeof(BITMAPINFO) + 3 * sizeof(DWORD));
 	bmi->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
